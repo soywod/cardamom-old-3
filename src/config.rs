@@ -82,4 +82,9 @@ impl Config {
 
         Ok(passwd)
     }
+
+    pub fn url(&self, path: &str) -> String {
+        let scheme = if self.ssl() { "https" } else { "http" };
+        format!("{}://{}:{}{}", &scheme, &self.host, &self.port, &path)
+    }
 }
