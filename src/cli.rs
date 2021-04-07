@@ -45,5 +45,12 @@ pub async fn run() -> Result<()> {
         Cache::build_and_write(&config, ctag, local_cards, remote_cards)?;
     }
 
+    if let Some(_) = matches.subcommand_matches("sync") {
+        let config = Config::from_file()?;
+        let cache = Cache::from_file(&config)?;
+
+        println!("{:#?}", cache);
+    }
+
     Ok(())
 }
