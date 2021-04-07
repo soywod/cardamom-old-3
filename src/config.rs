@@ -1,6 +1,12 @@
 use error_chain::error_chain;
 use serde::Deserialize;
-use std::{env, fs::File, io::Read, path::PathBuf, process::Command};
+use std::{
+    env,
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+    process::Command,
+};
 use toml;
 
 error_chain! {}
@@ -86,5 +92,9 @@ impl Config {
     pub fn url(&self, path: &str) -> String {
         let scheme = if self.ssl() { "https" } else { "http" };
         format!("{}://{}:{}{}", &scheme, &self.host, &self.port, &path)
+    }
+
+    pub fn file_path(&self, path: &str) -> PathBuf {
+        Path::join(&self.sync_dir, path)
     }
 }

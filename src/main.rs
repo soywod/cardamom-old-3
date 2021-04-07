@@ -1,10 +1,16 @@
+use tokio;
+
+mod cache;
 mod cli;
 mod config;
-mod repository {
-    pub(crate) mod remote;
+mod local {
+    pub(crate) mod model;
+    pub(crate) mod repository;
 }
-
-use tokio;
+mod remote {
+    pub(crate) mod model;
+    pub(crate) mod repository;
+}
 
 #[tokio::main]
 async fn main() {

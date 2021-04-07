@@ -1,8 +1,11 @@
+use chrono::{DateTime, Utc};
 use error_chain::error_chain;
 use quick_xml::de as xml;
 use reqwest::{Client, Method};
 use serde::Deserialize;
+use std::{collections::HashMap, fs, path::PathBuf};
 
+use super::model::Card;
 use crate::config::Config;
 
 error_chain! {}
@@ -10,33 +13,60 @@ error_chain! {}
 // Common structs
 
 #[derive(Debug, Deserialize)]
-struct Multistatus<T> {
+pub struct Multistatus<T> {
     #[serde(rename = "response")]
     pub responses: Vec<Response<T>>,
 }
 
 #[derive(Debug, Deserialize)]
-struct Response<T> {
+pub struct Response<T> {
     pub href: Href,
     pub propstat: Propstat<T>,
 }
 
 #[derive(Debug, Deserialize)]
-struct Propstat<T> {
+pub struct Propstat<T> {
     pub prop: T,
     pub status: Option<Status>,
 }
 
 #[derive(Debug, Deserialize)]
-struct Href {
+pub struct Href {
     #[serde(rename = "$value")]
     pub value: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct Status {
+pub struct Status {
     #[serde(rename = "$value")]
     pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Etag {
+    #[serde(rename = "$value")]
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LastModified {
+    #[serde(with = "date_parser", rename = "$value")]
+    pub value: DateTime<Utc>,
+}
+
+mod date_parser {
+    use chrono::{DateTime, Utc};
+    use serde::{self, Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        DateTime::parse_from_rfc2822(&s)
+            .map(|d| d.into())
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 // Current user principal structs
@@ -65,7 +95,7 @@ struct AddressbookHomeSet {
     pub href: Href,
 }
 
-// Addressbooks structs
+// Addressbook structs
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -80,6 +110,22 @@ struct AddressbookResourceType {
 
 #[derive(Debug, Deserialize)]
 struct Addressbook {}
+
+// Address data structs
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct AddressDataProp {
+    pub address_data: AddressData,
+    pub getetag: Etag,
+    pub getlastmodified: LastModified,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddressData {
+    #[serde(rename = "$value")]
+    pub value: String,
+}
 
 // Methods
 
@@ -227,7 +273,11 @@ async fn fetch_addressbook_url(config: &Config, client: &Client, path: String) -
         .unwrap_or(path))
 }
 
-pub async fn fetch_cards_full(config: &Config, client: &Client, path: &str) -> Result<()> {
+pub async fn fetch_and_write_cards(
+    config: &Config,
+    client: &Client,
+    path: &str,
+) -> Result<HashMap<String, Card>> {
     let res = client
         .request(report()?, &config.url(&path))
         .basic_auth(
@@ -238,12 +288,11 @@ pub async fn fetch_cards_full(config: &Config, client: &Client, path: &str) -> R
                     .chain_err(|| "Could not retrieve password")?,
             ),
         )
-        .header("Depth", 1)
+        .header("Depth", "1")
         .body(
             r#"
             <C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
                 <D:prop>
-                    <D:href />
                     <D:getetag />
                     <D:getlastmodified />
                     <C:address-data />
@@ -253,14 +302,40 @@ pub async fn fetch_cards_full(config: &Config, client: &Client, path: &str) -> R
         )
         .send()
         .await
-        .chain_err(|| "Could not send addressbook request")?;
+        .chain_err(|| "Could not send address data request")?;
+
     let res = res
         .text()
         .await
-        .chain_err(|| "Could not extract text body from addressbook response")?;
-    println!("{:#?}", res);
+        .chain_err(|| "Could not extract text body from address data response")?;
+    let res: Multistatus<AddressDataProp> =
+        xml::from_str(&res).chain_err(|| "Could not parse address data response")?;
 
-    Ok(())
+    let cards = res
+        .responses
+        .iter()
+        .filter_map(|res| {
+            let card = Card {
+                etag: res.propstat.prop.getetag.value.to_owned(),
+                name: PathBuf::from(&res.href.value)
+                    .file_stem()?
+                    .to_string_lossy()
+                    .to_string(),
+                date: res.propstat.prop.getlastmodified.value,
+            };
+
+            let path = config.file_path(&format!("{}.vcf", &card.name));
+            let content = res.propstat.prop.address_data.value.trim_end_matches("\r");
+            fs::write(&path, &content).ok()?;
+
+            Some(card)
+        })
+        .fold(HashMap::new(), |mut cards, card| {
+            cards.insert(card.name.to_owned(), card);
+            cards
+        });
+
+    Ok(cards)
 }
 
 pub async fn addressbook_path(config: &Config, client: &Client) -> Result<String> {

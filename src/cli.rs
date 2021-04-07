@@ -4,11 +4,12 @@ use reqwest::Client;
 use std::env;
 
 use crate::config::Config;
-use crate::repository;
+use crate::{cache::Cache, local, remote};
 
 error_chain! {
     links {
         Config(crate::config::Error, crate::config::ErrorKind);
+        Cache(crate::cache::Error, crate::cache::ErrorKind);
     }
 }
 
@@ -33,15 +34,18 @@ pub async fn run() -> Result<()> {
         let config = Config::from_file()?;
         let client = Client::new();
 
-        let path = repository::remote::addressbook_path(&config, &client)
+        let path = remote::repository::addressbook_path(&config, &client)
             .await
             .chain_err(|| "Could not fetch remote path")?;
 
-        repository::remote::fetch_cards_full(&config, &client, &path)
+        let remote_cards = remote::repository::fetch_and_write_cards(&config, &client, &path)
             .await
-            .chain_err(|| "Could not fetch cards")?;
+            .chain_err(|| "Could not fetch remote cards")?;
 
-        // println!("{:#?}", path);
+        let local_cards =
+            local::repository::read_cards(&config).chain_err(|| "Could not read local cards")?;
+
+        Cache::from(local_cards, remote_cards).write(&config)?;
     }
 
     Ok(())
