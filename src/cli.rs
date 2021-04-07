@@ -10,6 +10,8 @@ error_chain! {
     links {
         Config(crate::config::Error, crate::config::ErrorKind);
         Cache(crate::cache::Error, crate::cache::ErrorKind);
+        LocalRepository(local::repository::Error, local::repository::ErrorKind);
+        RemoteRepository(remote::repository::Error, remote::repository::ErrorKind);
     }
 }
 
@@ -34,18 +36,13 @@ pub async fn run() -> Result<()> {
         let config = Config::from_file()?;
         let client = Client::new();
 
-        let path = remote::repository::addressbook_path(&config, &client)
-            .await
-            .chain_err(|| "Could not fetch remote path")?;
+        let path = remote::repository::addressbook_path(&config, &client).await?;
+        let ctag = remote::repository::fetch_ctag(&config, &client, &path).await?;
+        let remote_cards =
+            remote::repository::fetch_and_write_cards(&config, &client, &path).await?;
+        let local_cards = local::repository::read_cards(&config)?;
 
-        let remote_cards = remote::repository::fetch_and_write_cards(&config, &client, &path)
-            .await
-            .chain_err(|| "Could not fetch remote cards")?;
-
-        let local_cards =
-            local::repository::read_cards(&config).chain_err(|| "Could not read local cards")?;
-
-        Cache::from(local_cards, remote_cards).write(&config)?;
+        Cache::build_and_write(&config, ctag, local_cards, remote_cards)?;
     }
 
     Ok(())

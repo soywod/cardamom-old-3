@@ -22,11 +22,19 @@ impl ToString for CacheItem {
     }
 }
 
-pub struct Cache(HashMap<String, CacheItem>);
+pub struct Cache {
+    pub ctag: String,
+    pub cards: HashMap<String, CacheItem>,
+}
 
 impl Cache {
-    pub fn from(lcards: HashMap<String, LocalCard>, rcards: HashMap<String, RemoteCard>) -> Self {
-        let cache = lcards
+    pub fn build_and_write(
+        config: &Config,
+        ctag: String,
+        lcards: HashMap<String, LocalCard>,
+        rcards: HashMap<String, RemoteCard>,
+    ) -> Result<()> {
+        let cards = lcards
             .iter()
             .fold(HashMap::new(), |mut cache, (name, lcard)| {
                 match rcards.get(name) {
@@ -44,19 +52,13 @@ impl Cache {
                         cache
                     }
                 }
-            });
-
-        Self(cache)
-    }
-
-    pub fn write(&self, config: &Config) -> Result<()> {
-        let cache = self
-            .0
+            })
             .iter()
             .map(|(_, card)| card.to_string())
             .collect::<Vec<_>>()
             .join("\n");
 
-        fs::write(config.file_path(".cache"), cache).chain_err(|| "Could not write cache")
+        fs::write(config.file_path(".cache"), format!("{}\n{}", ctag, cards))
+            .chain_err(|| "Could not write cache")
     }
 }

@@ -43,6 +43,12 @@ pub struct Status {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct Ctag {
+    #[serde(rename = "$value")]
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct Etag {
     #[serde(rename = "$value")]
     pub value: String,
@@ -125,6 +131,13 @@ pub struct AddressDataProp {
 pub struct AddressData {
     #[serde(rename = "$value")]
     pub value: String,
+}
+
+// Ctag structs
+
+#[derive(Debug, Deserialize)]
+pub struct CtagProp {
+    pub getctag: Ctag,
 }
 
 // Methods
@@ -302,9 +315,7 @@ pub async fn fetch_and_write_cards(
         )
         .send()
         .await
-        .chain_err(|| "Could not send address data request")?;
-
-    let res = res
+        .chain_err(|| "Could not send address data request")?
         .text()
         .await
         .chain_err(|| "Could not extract text body from address data response")?;
@@ -336,6 +347,50 @@ pub async fn fetch_and_write_cards(
         });
 
     Ok(cards)
+}
+
+pub async fn fetch_ctag(config: &Config, client: &Client, path: &str) -> Result<String> {
+    let res = client
+        .request(propfind()?, &config.url(&path))
+        .basic_auth(
+            &config.login,
+            Some(
+                config
+                    .passwd()
+                    .chain_err(|| "Could not retrieve password")?,
+            ),
+        )
+        .header("Depth", "0")
+        .body(
+            r#"
+            <D:propfind xmlns:D="DAV:" xmlns:C="http://calendarserver.org/ns/">
+                <D:prop>
+                    <C:getctag />
+                </D:prop>
+            </D:propfind>
+            "#,
+        )
+        .send()
+        .await
+        .chain_err(|| "Could not send ctag request")?
+        .text()
+        .await
+        .chain_err(|| "Could not extract text body from ctag response")?;
+    let res: Multistatus<CtagProp> =
+        xml::from_str(&res).chain_err(|| "Could not parse ctag response")?;
+
+    Ok(res
+        .responses
+        .iter()
+        .find(|res| {
+            res.propstat
+                .status
+                .as_ref()
+                .map(|s| s.value.ends_with("200 OK"))
+                .unwrap_or(false)
+        })
+        .map(|res| res.propstat.prop.getctag.value.to_owned())
+        .unwrap_or_default())
 }
 
 pub async fn addressbook_path(config: &Config, client: &Client) -> Result<String> {
